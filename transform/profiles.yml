@@ -1,0 +1,12 @@
+mta_pipeline_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../data/mta_analytics.db'
+      extensions:
+        - postgres
+      attach:
+        - path: "postgresql://postgres:postgres@localhost:5432/mta_static"
+          alias: mta_static
+          type: postgres

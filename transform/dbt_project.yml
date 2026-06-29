@@ -1,0 +1,21 @@
+name: 'mta_pipeline'
+version: '1.0.0'
+config-version: 2
+
+# Tells dbt to use the profile configuration we'll write in the next step
+profile: 'mta_pipeline_profile'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  mta_pipeline:
+    # This materializes everything as views by default, but we can override it later
+    +materialized: view

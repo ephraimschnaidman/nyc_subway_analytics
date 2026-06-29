@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: mta_static
+    database: mta_static
+    schema: public
+    description: "Raw live transit data streamed from the MTA API into PostgreSQL"
+    tables:
+      - name: live_train_positions
