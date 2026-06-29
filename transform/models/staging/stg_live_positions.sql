@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 with source_data as (
     -- This pulls directly from the Postgres database we attached in profiles.yml
     select * from {{ source('mta_static', 'live_train_positions') }}
