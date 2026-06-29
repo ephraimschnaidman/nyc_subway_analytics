@@ -56,10 +56,13 @@ if response.status_code == 200:
             
             # Insert the live train snapshot into Postgres
             cursor.execute("""
-                INSERT INTO live_train_positions (trip_id, route_id, latitude, longitude)
-                VALUES (%s, %s, %s, %s);
+                INSERT INTO live_train_positions (trip_id, route_id, latitude, longitude, fetched_at)
+                VALUES (%s, %s, %s, %s, date_trunc('minute', CURRENT_TIMESTAMP))
+                ON CONFLICT (trip_id, fetched_at) DO NOTHING;
             """, (trip_id, route_id, lat, lon))
-            records_inserted += 1
+            # cursor.rowcount tells us if a row was actually inserted or skipped
+            if cursor.rowcount > 0:
+                records_inserted += 1
 
     conn.commit()
     print(f" Done! Inserted {records_inserted} live train locations into 'live_train_positions'.")
