@@ -1,3 +1,13 @@
+"""
+The bootstrap_gtfs.py file is a one-time setup script (often called a provisioning or bootstrapping script). 
+Since it's a utility script used to initialize your database rather than something that runs continuously in your live ingestion pipeline, 
+it belongs in your scripts/ folder right alongside your visualization tool.
+Because subway tracks and station names don't change very often, 
+you only need to re-run it if the MTA updates its official schedules 
+(like adding a new station or permanently changing a train route), 
+which usually only happens a few times a year.
+"""
+
 import os
 import pandas as pd
 from sqlalchemy import create_engine, Text, Float, Integer
