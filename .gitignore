@@ -223,4 +223,5 @@ transform/logs/
 transform/dbt_packages/
 
 # generated local analytics databases
+data/*.db
 transform/*.db
