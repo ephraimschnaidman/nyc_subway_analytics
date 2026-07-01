@@ -1,74 +1,76 @@
+import os
 import requests
-from google.transit import gtfs_realtime_pb2
 import psycopg2
+from google.transit import gtfs_realtime_pb2 # Assuming you are using the standard GTFS-rt protobuf library
 
-# 1. Connect to your local Windows PostgreSQL database
-try:
+def fetch_mta_data():
+    # 1. Dictionary of the major MTA Real-Time Feed URLs covering the whole system
+    MTA_FEEDS = {
+        "ACE": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace",
+        "BDFM": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm",
+        "G": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g",
+        "JZ": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz",
+        "NQRW": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
+        "L": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l",
+        "1234567": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
+        "SIR": "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-si"
+    }
+
+    # 2. Configure API Headers (using an environment variable or direct string)
+    API_KEY = os.getenv("MTA_API_KEY", "YOUR_MTA_API_KEY_HERE")
+    headers = {"x-api-key": API_KEY}
+
+    # 3. Connect to your PostgreSQL database
     conn = psycopg2.connect(
-        dbname="mta_static",
-        user="postgres",
-        password="postgres",
         host="localhost",
-        port="5432"
+        database="mta_static",
+        user="postgres",       # Update if your username is different
+        password="postgres"    # Update with your actual password
     )
     cursor = conn.cursor()
-    print("Successfully connected to PostgreSQL database!")
-except Exception as e:
-    print(f"Database connection failed: {e}")
-    exit()
 
-# 2. Create a table to hold live train positions if it doesn't exist
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS live_train_positions (
-        id SERIAL PRIMARY KEY,
-        trip_id VARCHAR(100),
-        route_id VARCHAR(10),
-        latitude FLOAT,
-        longitude FLOAT,
-        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-""")
-conn.commit()
-
-# 3. Fetch the Live Real-time Feed from the MTA
-# This URL handles the ACE subway lines
-mta_url = "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace"
-
-print("Fetching live data from the MTA...")
-response = requests.get(mta_url)
-
-if response.status_code == 200:
-    # 4. Parse the Protocol Buffer data
-    feed = gtfs_realtime_pb2.FeedMessage()
-    feed.ParseFromString(response.content)
-    
-    print(f"Successfully downloaded feed. Parsing entries...")
     records_inserted = 0
-    
-    # Loop through all live transit updates inside the feed
-    for entity in feed.entity:
-        if entity.HasField('vehicle'):
-            vehicle = entity.vehicle
-            trip_id = vehicle.trip.trip_id
-            route_id = vehicle.trip.route_id
-            lat = vehicle.position.latitude
-            lon = vehicle.position.longitude
-            
-            # Insert the live train snapshot into Postgres
-            cursor.execute("""
-                INSERT INTO live_train_positions (trip_id, route_id, latitude, longitude, fetched_at)
-                VALUES (%s, %s, %s, %s, date_trunc('minute', CURRENT_TIMESTAMP))
-                ON CONFLICT (trip_id, fetched_at) DO NOTHING;
-            """, (trip_id, route_id, lat, lon))
-            # cursor.rowcount tells us if a row was actually inserted or skipped
-            if cursor.rowcount > 0:
-                records_inserted += 1
 
+    # 4. Loop through every single feed URL
+    for feed_name, url in MTA_FEEDS.items():
+        print(f"Fetching live data for lines: {feed_name}...")
+        try:
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                # Parse the protocol buffer feed
+                feed = gtfs_realtime_pb2.FeedMessage()
+                feed.ParseFromString(response.content)
+
+                for entity in feed.entity:
+                    # Ensure the entity has vehicle position data
+                    if entity.HasField('vehicle'):
+                        vehicle = entity.vehicle
+                        trip_id = vehicle.trip.trip_id
+                        route_id = vehicle.trip.route_id
+                        lat = vehicle.position.latitude
+                        lon = vehicle.position.longitude
+
+                        # 5. Insert rows rounded to the nearest minute, ignoring conflicts
+                        cursor.execute("""
+                            INSERT INTO live_train_positions (trip_id, route_id, latitude, longitude, fetched_at)
+                            VALUES (%s, %s, %s, %s, date_trunc('minute', CURRENT_TIMESTAMP))
+                            ON CONFLICT (trip_id, fetched_at) DO NOTHING;
+                        """, (trip_id, route_id, lat, lon))
+                        
+                        if cursor.rowcount > 0:
+                            records_inserted += 1
+            else:
+                print(f"Failed to fetch {feed_name}: HTTP {response.status_code}")
+
+        except Exception as e:
+            print(f"Error processing feed {feed_name}: {e}")
+
+    # 6. Commit changes and close the connection
     conn.commit()
-    print(f" Done! Inserted {records_inserted} live train locations into 'live_train_positions'.")
-else:
-    print(f"Failed to fetch data from MTA. Status Code: {response.status_code}")
+    cursor.close()
+    conn.close()
 
-# Close connections
-cursor.close()
-conn.close()
+    print(f"\nDone! Inserted {records_inserted} new live train locations across all lines.")
+
+if __name__ == "__main__":
+    fetch_mta_data()
