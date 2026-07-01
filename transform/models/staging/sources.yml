@@ -1,9 +1,13 @@
 version: 2
 
 sources:
-  - name: mta_static
+  - name: mta_static  
     database: mta_static
     schema: public
-    description: "Raw live transit data streamed from the MTA API into PostgreSQL"
+    description: "Raw live and static MTA data coming from our PostgreSQL database"
     tables:
       - name: live_train_positions
+        description: "Real-time train coordinates ingested by fetch_mta_live.py"
+        
+      - name: stops
+        description: "Static GTFS transit stops data bootstrapped into Postgres"
