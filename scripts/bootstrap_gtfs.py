@@ -9,85 +9,113 @@ which usually only happens a few times a year.
 """
 
 import os
-import pandas as pd
-from sqlalchemy import create_engine, Text, Float, Integer
+import zipfile
+import io
+import requests
+import psycopg2
 
-# 1. Connection Configuration
-# Adjust these environment variables or defaults to match your docker-compose.yml
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
-DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DB_NAME = os.getenv("POSTGRES_DB", "mta_static")
-
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
-def bootstrap_static_gtfs(data_directory: str):
-    """
-    Parses GTFS text files and seeds them into PostgreSQL.
-    """
-    print("🚀 Connecting to PostgreSQL...")
-    engine = create_engine(DATABASE_URL)
+def bootstrap_static_gtfs():
+    # 1. Official MTA URL for Static Schedule Data (GTFS)
+    GTFS_STATIC_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
     
-    # Define files to process, target tables, and their specific SQLAlchemy types
-    gtfs_files = {
-        "stops.txt": {
-            "table_name": "dim_stops",
-            "dtype": {
-                "stop_id": Text,
-                "stop_name": Text,
-                "stop_lat": Float,
-                "stop_lon": Float,
-                "location_type": Integer,
-                "parent_station": Text
-            }
-        },
-        "stop_times.txt": {
-            "table_name": "fact_stop_times",
-            "dtype": {
-                "trip_id": Text,
-                "arrival_time": Text,
-                "departure_time": Text,
-                "stop_id": Text,
-                "stop_sequence": Integer
-            }
-        }
-    }
+    # 2. Connect to your existing PostgreSQL database
+    print("Connecting to PostgreSQL database 'mta_static'...")
+    conn = psycopg2.connect(
+        host="localhost",
+        database="mta_static",
+        user="postgres",       # Update if your username is different
+        password="postgres"    # Update with your actual password
+    )
+    cursor = conn.cursor()
 
-    for file_name, config in gtfs_files.items():
-        file_path = os.path.join(data_directory, file_name)
+    # 3. Create the static reference tables if they don't exist
+    print("Creating static reference tables...")
+    cursor.execute("""
+        DROP TABLE IF EXISTS stops CASCADE;
+        CREATE TABLE stops (
+            stop_id VARCHAR(255) PRIMARY KEY,
+            stop_name VARCHAR(255),
+            stop_lat DOUBLE PRECISION,
+            stop_lon DOUBLE PRECISION
+        );
         
-        if not os.path.exists(file_path):
-            print(f"⚠️ Warning: {file_name} not found in {data_directory}. Skipping.")
-            continue
+        DROP TABLE IF EXISTS routes CASCADE;
+        CREATE TABLE routes (
+            route_id VARCHAR(255) PRIMARY KEY,
+            route_long_name VARCHAR(255),
+            route_type INT
+        );
+    """)
+    conn.commit()
+
+    # 4. Download the static zip file directly into memory
+    print("Downloading official MTA static schedule dataset (this may take a moment)...")
+    response = requests.get(GTFS_STATIC_URL)
+    
+    if response.status_code != 200:
+        print(f"Failed to download MTA data. HTTP Status: {response.status_code}")
+        return
+
+    # 5. Extract and parse the files inside the ZIP archive
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        
+        # --- PARSE STOPS ---
+        print("Processing and loading 'stops.txt'...")
+        with z.open("stops.txt") as f:
+            # Skip the header row
+            header = f.readline().decode('utf-8')
             
-        print(f"📖 Parsing {file_name}...")
-        
-        # Read CSV/TXT payload
-        # GTFS files can sometimes have mixed types or empty strings; we force string for IDs
-        df = pd.read_csv(file_path, dtype=str)
-        
-        # Clean up columns to match only what we explicitly defined in our schema config
-        columns_to_keep = list(config["dtype"].keys())
-        df = df[[col for col in columns_to_keep if col in df.columns]]
+            for line in f:
+                parts = line.decode('utf-8').strip().split(',')
+                if len(parts) >= 6:
+                    stop_id = parts[0].strip('"').strip()
+                    stop_name = parts[2].strip('"').strip()
+                    
+                    # Clean up spaces/quotes and check if coordinate fields are blank
+                    lat_raw = parts[4].strip('"').strip()
+                    lon_raw = parts[5].strip('"').strip()
+                    
+                    if not lat_raw or not lon_raw:
+                        continue # Skip rows with missing coordinates
+                        
+                    try:
+                        stop_lat = float(lat_raw)
+                        stop_lon = float(lon_raw)
+                    except ValueError:
+                        continue # Skip rows with malformed number formats
+                    
+                    cursor.execute("""
+                        INSERT INTO stops (stop_id, stop_name, stop_lat, stop_lon)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (stop_id) DO NOTHING;
+                    """, (stop_id, stop_name, stop_lat, stop_lon))
 
-        print(f"📥 Seeding {len(df)} rows into table '{config['table_name']}'...")
-        
-        # Write to Postgres
-        df.to_sql(
-            name=config["table_name"],
-            con=engine,
-            if_exists="replace",  # Overwrites existing data on bootstrap rerun
-            index=False,
-            dtype=config["dtype"]
-        )
-        print(f"✅ Successfully seeded '{config['table_name']}'.")
+        # --- PARSE ROUTES ---
+        print("Processing and loading 'routes.txt'...")
+        with z.open("routes.txt") as f:
+            header = f.readline().decode('utf-8')
+            for line in f:
+                parts = line.decode('utf-8').strip().split(',')
+                if len(parts) >= 4:
+                    route_id = parts[0].strip('"').strip()
+                    route_long_name = parts[3].strip('"').strip()
+                    
+                    cursor.execute("""
+                        INSERT INTO routes (route_id, route_long_name, route_type)
+                        VALUES (%s, %s, 0)
+                        ON CONFLICT (route_id) DO NOTHING;
+                    """, (route_id, route_long_name))
 
-    print("\n🎉 Database bootstrapping complete!")
+    # 6. Save everything and wrap up
+    conn.commit()
+    
+    cursor.execute("SELECT COUNT(*) FROM stops;")
+    total_stops = cursor.fetchone()[0]
+    
+    cursor.close()
+    conn.close()
+    
+    print(f"\n🎉 Success! Bootstrapped {total_stops} static transit stations into Postgres.")
 
 if __name__ == "__main__":
-    # Assumes your static files are unzipped inside a folder named 'gtfs_data'
-    # Download latest NYC Subway GTFS from: http://web.mta.info/developers/developer-data-terms.html#data
-    DATA_DIR = "./gtfs_data" 
-    
-    bootstrap_static_gtfs(DATA_DIR)
+    bootstrap_static_gtfs()
