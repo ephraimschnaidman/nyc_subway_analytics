@@ -30,12 +30,31 @@ try:
         where snapshot_time = (select max(snapshot_time) from fct_line_density)
         order by active_train_count desc, subway_line
     """)
+    station_activity = read_table("""
+        select snapshot_time, subway_line, trip_id, closest_station_name
+        from stg_live_with_stations
+        where snapshot_time = (select max(snapshot_time) from stg_live_with_stations)
+        order by subway_line, closest_station_name
+    """)
 except Exception as exc:
     st.error(f"Could not read dbt marts from {DB_PATH}: {exc}")
     st.stop()
 
 latest_time = activity["snapshot_time"].max() if not activity.empty else None
 latest_total = int(activity.iloc[0]["total_active_trips"]) if not activity.empty else 0
+
+line_options = ["All"] + sorted(
+    station_activity["subway_line"].dropna().unique().tolist()
+)
+
+selected_line = st.sidebar.selectbox("Subway line", line_options)
+
+if selected_line == "All":
+    filtered_station_activity = station_activity
+else:
+    filtered_station_activity = station_activity[
+        station_activity["subway_line"] == selected_line
+    ]
 
 metric_cols = st.columns(3)
 metric_cols[0].metric("Latest active trips", latest_total)
@@ -61,3 +80,6 @@ with right:
 
 st.subheader("Recent Activity Rows")
 st.dataframe(activity, use_container_width=True, hide_index=True)
+
+st.subheader("Latest Trains By Closest Station")
+st.dataframe(filtered_station_activity, use_container_width=True, hide_index=True)
