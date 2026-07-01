@@ -31,10 +31,10 @@ try:
         order by active_train_count desc, subway_line
     """)
     station_activity = read_table("""
-        select snapshot_time, subway_line, trip_id, closest_station_name
+        select snapshot_time, subway_line, trip_id, stop_id, current_station_name
         from stg_live_with_stations
         where snapshot_time = (select max(snapshot_time) from stg_live_with_stations)
-        order by subway_line, closest_station_name
+        order by subway_line, current_station_name
     """)
 except Exception as exc:
     st.error(f"Could not read dbt marts from {DB_PATH}: {exc}")
@@ -81,5 +81,5 @@ with right:
 st.subheader("Recent Activity Rows")
 st.dataframe(activity, use_container_width=True, hide_index=True)
 
-st.subheader("Latest Trains By Closest Station")
+st.subheader("Latest Trains By Reported Station")
 st.dataframe(filtered_station_activity, use_container_width=True, hide_index=True)

@@ -40,6 +40,37 @@ def ensure_live_table(cursor):
     """)
 
 
+def collect_trip_stop_ids(feed):
+    trip_stop_ids = {}
+    for entity in feed.entity:
+        if not entity.HasField("trip_update"):
+            continue
+
+        trip_id = entity.trip_update.trip.trip_id
+        if not trip_id:
+            continue
+
+        for stop_time_update in entity.trip_update.stop_time_update:
+            if stop_time_update.stop_id:
+                trip_stop_ids[trip_id] = stop_time_update.stop_id
+                break
+
+    return trip_stop_ids
+
+
+def get_vehicle_position(vehicle):
+    if not vehicle.HasField("position"):
+        return None, None
+
+    latitude = vehicle.position.latitude
+    longitude = vehicle.position.longitude
+
+    if latitude == 0 and longitude == 0:
+        return None, None
+
+    return latitude, longitude
+
+
 def fetch_mta_data():
     api_key = os.getenv("MTA_API_KEY")
     headers = {"x-api-key": api_key} if api_key else {}
@@ -57,15 +88,15 @@ def fetch_mta_data():
             if response.status_code == 200:
                 feed = gtfs_realtime_pb2.FeedMessage()
                 feed.ParseFromString(response.content)
+                trip_stop_ids = collect_trip_stop_ids(feed)
 
                 for entity in feed.entity:
                     if entity.HasField('vehicle'):
                         vehicle = entity.vehicle
                         trip_id = vehicle.trip.trip_id
                         route_id = vehicle.trip.route_id
-                        lat = vehicle.position.latitude
-                        lon = vehicle.position.longitude
-                        stop_id = getattr(vehicle, 'stop_id', None)
+                        lat, lon = get_vehicle_position(vehicle)
+                        stop_id = vehicle.stop_id or trip_stop_ids.get(trip_id)
 
                         cursor.execute("""
                             INSERT INTO live_train_positions (trip_id, route_id, latitude, longitude, stop_id, fetched_at)
