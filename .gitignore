@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# dbt build artifacts
+transform/target/
+transform/logs/
+transform/dbt_packages/
+
+# generated local analytics databases
+transform/*.db

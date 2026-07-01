@@ -1,8 +1,11 @@
 import duckdb
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DB_PATH = PROJECT_ROOT / "data" / "mta_analytics.db"
 
 def generate_terminal_chart():
-    # 1. Connect to your DuckDB analytics file
-    conn = duckdb.connect('../data/mta_analytics.db')
+    conn = duckdb.connect(str(DB_PATH))
     
     # 2. Grab the latest 15 snapshots from your activity tracker mart
     query = """

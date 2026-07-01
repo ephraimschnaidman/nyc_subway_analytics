@@ -1,0 +1,12 @@
+mta_pipeline_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../data/mta_analytics.db'
+      extensions:
+        - postgres
+      attach:
+        - path: "postgresql://{{ env_var('POSTGRES_USER', 'postgres') }}:{{ env_var('POSTGRES_PASSWORD', 'postgres') }}@{{ env_var('POSTGRES_HOST', 'localhost') }}:{{ env_var('POSTGRES_PORT', '5432') }}/{{ env_var('POSTGRES_DB', 'mta_static') }}"
+          alias: mta_static
+          type: postgres

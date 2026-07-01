@@ -9,23 +9,29 @@ which usually only happens a few times a year.
 """
 
 import os
+import csv
 import zipfile
 import io
 import requests
 import psycopg2
+
+def get_pg_connection():
+    return psycopg2.connect(
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        database=os.getenv("POSTGRES_DB", "mta_static"),
+        user=os.getenv("POSTGRES_USER", "postgres"),
+        password=os.getenv("POSTGRES_PASSWORD", "postgres")
+    )
+
 
 def bootstrap_static_gtfs():
     # 1. Official MTA URL for Static Schedule Data (GTFS)
     GTFS_STATIC_URL = "http://web.mta.info/developers/data/nyct/subway/google_transit.zip"
     
     # 2. Connect to your existing PostgreSQL database
-    print("Connecting to PostgreSQL database 'mta_static'...")
-    conn = psycopg2.connect(
-        host="localhost",
-        database="mta_static",
-        user="postgres",       # Update if your username is different
-        password="postgres"    # Update with your actual password
-    )
+    print(f"Connecting to PostgreSQL database '{os.getenv('POSTGRES_DB', 'mta_static')}'...")
+    conn = get_pg_connection()
     cursor = conn.cursor()
 
     # 3. Create the static reference tables if they don't exist
@@ -62,49 +68,42 @@ def bootstrap_static_gtfs():
         # --- PARSE STOPS ---
         print("Processing and loading 'stops.txt'...")
         with z.open("stops.txt") as f:
-            # Skip the header row
-            header = f.readline().decode('utf-8')
-            
-            for line in f:
-                parts = line.decode('utf-8').strip().split(',')
-                if len(parts) >= 6:
-                    stop_id = parts[0].strip('"').strip()
-                    stop_name = parts[2].strip('"').strip()
-                    
-                    # Clean up spaces/quotes and check if coordinate fields are blank
-                    lat_raw = parts[4].strip('"').strip()
-                    lon_raw = parts[5].strip('"').strip()
-                    
-                    if not lat_raw or not lon_raw:
-                        continue # Skip rows with missing coordinates
-                        
-                    try:
-                        stop_lat = float(lat_raw)
-                        stop_lon = float(lon_raw)
-                    except ValueError:
-                        continue # Skip rows with malformed number formats
-                    
-                    cursor.execute("""
-                        INSERT INTO stops (stop_id, stop_name, stop_lat, stop_lon)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (stop_id) DO NOTHING;
-                    """, (stop_id, stop_name, stop_lat, stop_lon))
+            reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8"))
+            for row in reader:
+                stop_id = row["stop_id"].strip()
+                stop_name = row["stop_name"].strip()
+                lat_raw = row["stop_lat"].strip()
+                lon_raw = row["stop_lon"].strip()
+
+                if not lat_raw or not lon_raw:
+                    continue
+
+                try:
+                    stop_lat = float(lat_raw)
+                    stop_lon = float(lon_raw)
+                except ValueError:
+                    continue
+
+                cursor.execute("""
+                    INSERT INTO stops (stop_id, stop_name, stop_lat, stop_lon)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (stop_id) DO NOTHING;
+                """, (stop_id, stop_name, stop_lat, stop_lon))
 
         # --- PARSE ROUTES ---
         print("Processing and loading 'routes.txt'...")
         with z.open("routes.txt") as f:
-            header = f.readline().decode('utf-8')
-            for line in f:
-                parts = line.decode('utf-8').strip().split(',')
-                if len(parts) >= 4:
-                    route_id = parts[0].strip('"').strip()
-                    route_long_name = parts[3].strip('"').strip()
-                    
-                    cursor.execute("""
-                        INSERT INTO routes (route_id, route_long_name, route_type)
-                        VALUES (%s, %s, 0)
-                        ON CONFLICT (route_id) DO NOTHING;
-                    """, (route_id, route_long_name))
+            reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8"))
+            for row in reader:
+                route_id = row["route_id"].strip()
+                route_long_name = row["route_long_name"].strip()
+                route_type = int(row["route_type"])
+
+                cursor.execute("""
+                    INSERT INTO routes (route_id, route_long_name, route_type)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (route_id) DO NOTHING;
+                """, (route_id, route_long_name, route_type))
 
     # 6. Save everything and wrap up
     conn.commit()
@@ -115,7 +114,7 @@ def bootstrap_static_gtfs():
     cursor.close()
     conn.close()
     
-    print(f"\n🎉 Success! Bootstrapped {total_stops} static transit stations into Postgres.")
+    print(f"\nSuccess! Bootstrapped {total_stops} static transit stations into Postgres.")
 
 if __name__ == "__main__":
     bootstrap_static_gtfs()

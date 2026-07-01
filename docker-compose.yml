@@ -6,9 +6,9 @@ services:
     container_name: mta_postgres
     restart: always
     environment:
-      POSTGRES_USER: mta_admin
-      POSTGRES_PASSWORD: mta_secure_password
-      POSTGRES_DB: mta_transit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mta_static
     ports:
       - "5432:5432"
     volumes:

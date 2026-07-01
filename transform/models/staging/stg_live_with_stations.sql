@@ -1,4 +1,4 @@
-{{ config(materialized='view') }}
+{{ config(materialized='table') }}
 
 with live_positions as (
     select * from {{ ref('stg_live_positions') }}

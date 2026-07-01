@@ -12,6 +12,7 @@ renamed as (
         route_id as subway_line,
         latitude,
         longitude,
+        stop_id,
         fetched_at as snapshot_time
     from source_data
 )
